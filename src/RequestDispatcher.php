@@ -1,6 +1,8 @@
 <?php
 /**
- * Stores routes data and provids methods to retrieve them
+ * Takes an HTTP Request's data and tries to match it to a route.
+ * If a match is found it runs the matching route's handler and returns the 
+ * output in a format decided either by config or request type.
  * 
  * @package    JetRouter
  * @subpackage Router
@@ -8,478 +10,238 @@
 
 namespace JetRouter;
 
-class RouteStore
+class RequestDispatcher
 {
 
-  /**
-   * The namespace regex (standard alphanumeric plus the "_", "-", "." and "/" characters).
-   * it also does not allow consecutive "/" characters
-   */
-  const NAMESPACE_REGEX = '~(?!.*(\/)\1)^([a-zA-Z0-9_\-\.\/])+$~';
-
-  const CHUNK_SIZE = 10;
+  /*** CONST ***/
 
   /**
-   * The status code returned when a route is not found.
+   * The status code returned when a route is not dispatched,
+   * used to allow WordPress to take routing over.
    */
-  const NOT_FOUND = 0;
+  const NOT_DISPATCHED = 0;
+
+
+  /*** STATIC PROPERTIES ***/
+
+  public static $outputFormats = ['auto', 'html', 'json'];
 
 
   /*** STATIC METHODS ***/
 
   /**
-   * Determines if the route path passed as argument is a static route path.
+   * Determines if the passed parameter is a respond_to array.
+   * 
+   * The respond_to array is a feature of the route handler, allowing to determine
+   * different behaviour and output for html and json. For json one can simply
+   * return data in json format, whereas html runs the callback and does whatever
+   * it needs to do (e.g. redirects etc.).
+   * 
+   * This is inspired by the Ruby on Rails respond_to block feature.
    *
-   * @param  string  $routePath  The route path
+   * @param      <type>   $output  The output
    *
-   * @return boolean  True if the route passed as argument is a static route path, False otherwise.
+   * @return     boolean  True if respond to, False otherwise.
    */
-  public static function isStaticRoutePath($routePath)
+  private static function isRespondTo($output)
   {
-    return strpos($routePath, '{') === false && strpos($routePath, '}') === false;
+    return (
+      is_array($output) && 
+      array_key_exists('respond_to', $output)
+    );
   }
 
 
   /*** PROPERTIES ***/
 
-  private $namespace = '';
-  private $staticRoutes = [];
-  private $dynamicRoutesData = [];
-  private $dynamicRoutes = [];
+  private $outputFormat;
 
 
   /*** PUBLIC METHODS ***/
 
   /**
-   * Parses the namespace and then sets it as object property
+   * Initializes the object and sets the output format
    *
-   * @param  string  $namespace  The router namespace
+   * @param  string  $outputFormat  The output format
    */
-  public function __construct($namespace)
+  public function __construct($outputFormat)
   {
-    $this->namespace = $this->parseNamespace($namespace);
+    $this->outputFormat = $this->parseOutputFormat($outputFormat);
   }
 
   /**
-   * Adds a route to this object.
-   * 
-   * Makes sure the route name is unique, then prepends the router namespace
-   * to the route path and finally it calls the appropriate add route method
-   * depending on route type (static/dynamic).
+   * Dispatches the HTTP request or returns a status code if no routes matches
    *
-   * @param  string    $httpMethod  The route's http method
-   * @param  string    $routePath   The route's path
-   * @param  string    $routeName   The route's name
-   * @param  callback  $handler     The handler
+   * Tries to find a route in the route store by http method and request path.
+   * Returns a NOT_DISPATCHED status code if no route matches.
+   *
+   *
+   * MJE: MOD -- added filter capability
+   *
+   * If a route match is found and the route has filters or global filters are defined then the filters are called and if any one of them return false 
+   * the route is not called.
+   * ELSE : 
+   * If a match is found, the route handler is called and the appropriate output
+   * is printed/returned depending on request type and config.
+   *
+   * @param  RouteStore  $routeStore         The route store object
+   * @param  string      $requestHttpMethod  The request http method
+   * @param  string      $requestPath        The request path
+   *
+   * @return integer|mixed|string|mixed  Returns the RouteStore::NOT_FOUND status code (int), mixed if it prints json or returning $output, and finally if $output is a callback returns its returned value
    */
-  public function addRoute($httpMethod, $routePath, $routeName, $handler, $filters = array() )
+  public function dispatch($routeStore, $requestHttpMethod, $requestPath, $global_filters = array() )
   {
-    $this->validateRouteNameUniqueness($routeName);
-    $routePath = $this->preparePath($routePath);
+    $route = $routeStore->findRouteByRequestMethodAndPath($requestHttpMethod, $requestPath);
 
-    $add = self::isStaticRoutePath($routePath) ? 'addStaticRoute' : 'addDynamicRoute';
-
-    $this->$add($httpMethod, $routePath, $routeName, $handler, $filters );
-  }
-
-  /**
-   * Looks for a route by request http method and request path.
-   * 
-   * Tries to establish if it should look for the route at all. If it should, it
-   * looks for a static route first, then for a dynamic one if no static route was 
-   * found. If a static or dynamic route is found, that route is returned, otherwise
-   * the RouteStore::NOT_FOUND status code is returned.
-   *
-   * @param  string  $requestHttpMethod  The request http method
-   * @param  string  $requestPath        The request path
-   *
-   * @return integer|array  Returns the RouteStore::NOT_FOUND status code (int) if not found, The route array if a route is found
-   */
-  public function findRouteByRequestMethodAndPath($requestHttpMethod, $requestPath)
-  {
-    $requestPath = trim($requestPath, ' /');
-
-    if( ! $this->shouldLookForRoute($requestPath) ){
-      return self::NOT_FOUND;
+    if($route === RouteStore::NOT_FOUND){
+      // route does not exist, fallback to WordPress routing
+      return self::NOT_DISPATCHED;
     }
 
-    $route = $this->findStaticRoute($requestHttpMethod, $requestPath);
+    // MJE MOD: Call global filters if any exist
+    if ( !empty( $global_filters ) ) { 
+	foreach( $global_filters as $filter ) { 
+		$result = call_user_func_array( $filter, $route );
+		if ( false === $result ) { 
+			return self::NOT_DISPATCHED;
+		}
+	}
+    }
+    
+    // MJE MOD: Call route filters if any exist
+    if ( !empty( $route['routeFilters'] ) ) { 
+	foreach( $route['routeFilters'] as $filter ) { 
+		$result = call_user_func_array( $filter, $route );
+		if ( false === $result ) { 
+			return self::NOT_DISPATCHED;
+		}
+	}
+    }
+    
+    $output = $this->parseHandlerOutput(
+      call_user_func_array($route['routeHandler'], $route['routeArgs'])
+    );
 
-    if( ! $route ){
-      $route = $this->findDynamicRoute($requestHttpMethod, $requestPath);
-
-      if( ! $route ){
-        $route = self::NOT_FOUND;
-      }
+    if( $this->shouldReturnJson() ){
+      return wp_send_json($output);
     }
 
-    return $route;
-  }
+    if( is_callable($output) ){
+      return call_user_func($output);
+    }
 
-  /**
-   * Looks for a static route by name.
-   * 
-   * Alias method for getRouteByName method specifying static routes as the
-   * routes to be searched.
-   *
-   * @param  string  $routeName  The route name
-   *
-   * @return integer|array  Returns the RouteStore::NOT_FOUND status code (int) if not found, The route array if a route is found
-   */
-  public function getStaticRouteByName($routeName)
-  {
-    return $this->getRouteByName(
-      $this->staticRoutes,
-      $routeName
-    );
-  }
-
-  /**
-   * Looks for a dynamc route by name.
-   * 
-   * Alias method for getRouteByName method specifying dynamc routes as the
-   * routes to be searched.
-   *
-   * @param  string  $routeName  The route name
-   *
-   * @return integer|array  Returns the RouteStore::NOT_FOUND status code (int) if not found, The route array if a route is found
-   */
-  public function getDynamicRouteByName($routeName, $args = [])
-  {
-    return $this->getRouteByName(
-      $this->dynamicRoutesData,
-      $routeName,
-      $args
-    );
-  }
+    return $output;
+  } 
 
 
   /*** PRIVATE METHODS ***/
 
   /**
-   * Parses the router namespace.
+   * Parses the output format parameter.
    * 
-   * Makes sure that if the namespace is not empty it matches the regex 
-   * specified in the NAMESPACE_REGEX constant of this class. Trims whitespace
-   * and leading/trailing forward slashes. 
+   * Makes sure the output format parameter has one of the predefined values set
+   * in the $outputFormats static property set in this class.
    *
-   * @param  string  $namespace  The namespace
+   * @param   string  $outputFormat  The output format
    *
-   * @throws Exception\InvalidNamespaceException  If the namespace is not empty and does not match the namespace regex
+   * @throws  Exception\InvalidOutputFormatException  If the output format is invalid
    *
-   * @return  string  The parsed router namespace
+   * @return  string The output format value
    */
-  private function parseNamespace($namespace)
+  private function parseOutputFormat($outputFormat)
   {
-    if( 
-      ! empty($namespace) && 
-      ! preg_match(self::NAMESPACE_REGEX, $namespace)
-    ){
-      throw new Exception\InvalidNamespaceException(
-        "'$namespace' is not a valid namespace",
+    if( ! in_array($outputFormat, self::$outputFormats, true) ){
+      throw new Exception\InvalidOutputFormatException(
+        "'$outputFormat' is not a valid output format.",
         1
       );
     }
 
-    return trim($namespace, ' /');
+    return $outputFormat;
   }
 
   /**
-   * Makes sure the route name passed as argument is not used for another route already.
+   * Parses and returns the route handler output.
    * 
-   * Looks for static and dynamic routes already using the route name passed as 
-   * argument, throws an Exception if it finds one. Returns not found status code otherwise.
+   * Checks that the output is a respond_to array. If it's not it simply returns 
+   * the output as it was passed in.
+   * 
+   * If it is, it validates it and then it returns the appropriate output format
+   * depending on config or request type.
    *
-   * @param  $routeName  The route's name
+   * @param  mixed  $output  The output of the route handler
    *
-   * @throws Exception\InvalidRouteException  If a route with the route name passed as argument is found
-   *
-   * @return integer|void  Returns the RouteStore::NOT_FOUND status code (int) if no route is found, void otherwise
+   * @return mixed  The parsed output of the route handler
    */
-  private function validateRouteNameUniqueness($routeName)
+  private function parseHandlerOutput($output)
   {
-    $route = $this->getStaticRouteByName($routeName);
-
-    if($route === self::NOT_FOUND){      
-      $route = $this->getDynamicRouteByName($routeName);
-
-      if($route === self::NOT_FOUND){
-        return self::NOT_FOUND;
-      }
+    if( ! self::isRespondTo($output) ){
+      return $output;
     }
 
-    throw new Exception\InvalidRouteException(
-      "A route named '$routeName' already exists."
+    $this->validateRespondTo($output['respond_to']);
+    $type = $this->shouldReturnJson() ? 'json' : 'html';
+
+    return $output['respond_to'][$type];
+  }
+
+  /**
+   * Determines if the route handler respond_to block should return the json data
+   * 
+   * Looks for a "json" get parameter, if it's missing it checks for conditions
+   * that indicate the request we're handling is an ajax request, or finally it
+   * simply looks for the output format not being set to html.
+   * 
+   * If any of these condition is met it returns true
+   *
+   * @return  boolean  The should return json boolean
+   */
+  private function shouldReturnJson()
+  {
+    return (
+      isset($_GET['json']) ||
+      $this->outputFormat === 'json' ||
+      (
+        ! empty( $_SERVER['HTTP_X_REQUESTED_WITH'] ) && 
+        strtolower( $_SERVER['HTTP_X_REQUESTED_WITH'] ) == 'xmlhttprequest' &&
+        $this->outputFormat !== 'html'
+      )
     );
   }
 
   /**
-   * Adds a static route to this object.
-   * 
-   * Parses the route data passed to this method as arguments through the
-   * StaticRouteParser class, then makes sure no conflicting route already exists
-   * and finally it adds the route data to the staticRoutes property of this object.
+   * Validates the respond_to array
    *
-   * @param  string    $httpMethod  The route's http method
-   * @param  string    $routePath   The route's path
-   * @param  string    $routeName   The route's name
-   * @param  callback  $handler     The route's handler
+   * @param  array  $respondTo  The respond_to array
    *
-   * @throws Exception\InvalidRouteException  If a route with the same http method and path already exists
+   * @throws Exception\InvalidRouteHandlerException  If the respond_to is not an array, or missing the 'json' or 'html' keys, or if 'html' property is not callable
    */
-  private function addStaticRoute($httpMethod, $routePath, $routeName, $handler, $filters = array() )
+  private function validateRespondTo($respondTo)
   {
-
-    $route = new StaticRouteParser($httpMethod, $routePath, $routeName, $handler);
-    $httpMethod = $route->getHttpMethod();
-    $routePath = $route->getPath();
-    $routeName = $route->getName();
-    $handler = $route->getHandler();
-
-    if ( isset( $this->staticRoutes[$routePath][$httpMethod]) ){
-      throw new Exception\InvalidRouteException(
-        "Cannot register two routes matching '$routePath' for method '$httpMethod'"
+    if( ! is_array($respondTo) ){
+      throw new Exception\InvalidRouteHandlerException(
+        'The "respond_to" handler output property must be an array.'
       );
     }
 
-    $this->staticRoutes[$routePath][$httpMethod] = [
-      'routeName' => $routeName,
-      'routeHandler' => $handler,
-      'routeArgs' => array(),
-      'routerFilters' => $filters,
-    ];
-  }
-
-  /**
-   * Adds a dynamic route.
-   *
-   * @param      <type>                           $httpMethod  The http method
-   * @param      <type>                           $routePath   The route path
-   * @param      <type>                           $routeName   The route name
-   * @param      <type>                           $handler     The handler
-   * MJE: MOD -- added filter capability
-   * @param       array     $filters     Array of callbacks for filtering a route before the route is called
-   *
-   * @throws     Exception\InvalidRouteException  (description)
-   */
-  private function addDynamicRoute($httpMethod, $routePath, $routeName, $handler, $filters = array())
-  {
-    $route = new DynamicRouteParser($httpMethod, $routePath, $routeName, $handler);
-
-    $regex = $route->getRegex();
-    $paramsNames = $route->getParamsNames();
-    $segments = $route->getSegments();
-
-    if( isset( $this->dynamicRoutesData[$regex][$httpMethod] ) ){
-       throw new Exception\InvalidRouteException("Cannot register two routes matching '$regex' for method '$httpMethod'");
+    if( ! array_key_exists('json', $respondTo) ){
+      throw new Exception\InvalidRouteHandlerException(
+        'Missing json output from respond_to route handler.'
+      );
     }
 
-    $this->dynamicRoutesData[$regex][$httpMethod] = [
-      'routeName' => $routeName,
-      'routeHandler' => $handler,
-      'routeArgs' => $paramsNames,
-      'routeSegments' => $segments,
-      'routeFilters' => $filters,
-    ];
-  }
-
-  /**
-   * Parses the dynamic route data and generates the dynamic routes.
-   * 
-   * Explanation of the group position based, non chunked dispatching 
-   * implementation adopted by this router:
-   * 
-   * The router splits the dynamic routes data array in chunks whose size is 
-   * defined in the CHUNK_SIZE constant of this class. It then iterates
-   * over the chunks to merge all the regexes in the chunk into a single
-   * regex containing the regex expressions in a single OR group.
-   * 
-   * The PCRE regex "?|" non-capturing group type is used to avoid ending
-   * up with a massive amount of unneeded capturing groups (bad performance).
-   * However, doing this also means losing separate group numbers which would 
-   * have allowed us to know which of the regexes in the OR group matched.
-   * 
-   * This is solved by adding dummy groups to each individual route, making the
-   * matches size of each regex unique.
-   * 
-   * This unique number is also then used to map each of the regexes in the 
-   * OR group to its route data (handlers) in the routeMap array, i.e. the 
-   * unique number is used as index in the routeMap array.
-   * 
-   * This regexes OR merge and the subsequent procedure outline above 
-   * is repeated for each chunk of routes.
-   * 
-   * @return  boolean  Returns False if the dynamic route data array is empty
-   */
-  private function generateDynamicRoutes()
-  {
-    $dynamicRoutesN = count($this->dynamicRoutesData);
-
-    if( ! $dynamicRoutesN ){
-      return false;
+    if( ! array_key_exists('html', $respondTo) ){
+      throw new Exception\InvalidRouteHandlerException(
+        'Missing html callback from respond_to route handler.'
+      );
     }
 
-    $partsN = max(1, round( $dynamicRoutesN / self::CHUNK_SIZE ) );
-    $chunkSize = ceil($dynamicRoutesN / $partsN);
-    $chunks = array_chunk( $this->dynamicRoutesData, $chunkSize, true);
-    $dynamicRoutes = [];
-
-    foreach($chunks as $chunk){
-      $routeMap = [];
-      $regexes = [];
-      $groupsN = 0;
-
-      foreach($chunk as $regex => $routes){
-        $firstRoute = reset($routes);
-        $variablesN = count($firstRoute['routeArgs']);
-        $groupsN = max($groupsN, $variablesN);
-
-        $regexes[] = $regex . str_repeat('()', $groupsN - $variablesN);
-
-        foreach ($routes as $httpMethod => $route) {
-          $routeMap[$groupsN + 1][$httpMethod] = $route;
-        }
-
-        $groupsN++;
-      }
-
-      $regex = '~^(?|' . implode('|', $regexes) . ')$~';
-
-      $dynamicRoutes[] = [ 'routeRegex' => $regex, 'routeMap' => $routeMap ];
+    if( ! is_callable($respondTo['html']) ){
+      throw new Exception\InvalidRouteHandlerException(
+        "The html property of the respond_to route handler needs to be callable."
+      );
     }
-
-    $this->dynamicRoutes = $dynamicRoutes;
   }
 
-  /**
-   * Looks for a static route by http method and request path
-   *
-   * @param  string  $httpMethod   The http method
-   * @param  string  $requestPath  The request path
-   *
-   * @return array|boolean  Returns the route array if the route is found, False otherwise
-   */
-  private function findStaticRoute($httpMethod, $requestPath)
-  {
-    if( ! isset($this->staticRoutes[$requestPath][$httpMethod]) ){
-      return false;
-    }
-
-    return $this->staticRoutes[$requestPath][$httpMethod];
-  }
-
-  /**
-   * Looks for a dynamic route by http method and request path.
-   * 
-   * Generates the dynamic routes chunks from the dynamic routes data. This is
-   * done only at "find" time to avoid doing this work if a static route matched
-   * the request we are trying to route.
-   * 
-   * If both route regex match and http method handler are found, arguments are
-   * extracted from the route path, added to the route array, and the route array
-   * is then returned.
-   *
-   * @param  string  $httpMethod   The http method
-   * @param  string  $requestPath  The request path
-   *
-   * @return array|boolean  Returns the route array if the route is found, False otherwise
-   */
-  private function findDynamicRoute($httpMethod, $requestPath)
-  {
-    $this->generateDynamicRoutes();
-
-    foreach($this->dynamicRoutes as $data){
-      if ( ! preg_match( $data['routeRegex'], $requestPath, $matches ) ){
-        continue;
-      }
-
-      $matchesN = count($matches);
-
-      while( ! isset( $data['routeMap'][$matchesN++] ) );
-
-      $routes = $data['routeMap'][$matchesN - 1];
-
-      foreach(array_keys($routes[$httpMethod]['routeArgs']) as $i => $varName){
-        if( ! isset($matches[$i + 1]) || $matches[$i + 1] === '' ){
-          unset($routes[$httpMethod]['routeArgs'][$i]);
-          continue;
-        }
-
-        $routes[$httpMethod]['routeArgs'][$varName] = $matches[$i + 1];
-      }
-
-      return $routes[$httpMethod];
-    }
-
-    return false;
-  }
-
-  /**
-   * Looks for a route by name.
-   * 
-   * Loops over the routes passed as argument and if one with the same name is
-   * found, it does some parsing and it returnes the route data array.
-   *
-   * @param  array   $routes     The routes array
-   * @param  string  $routeName  The name of the route to find
-   * @param  array   $args       The arguments to pass to the route data array (dynamic routes only)
-   *
-   * @return  array|integer   The route data array if a route is found, RouteStore::NOT_FOUND status code (int) otherwise
-   */
-  private function getRouteByName($routes, $routeName, $args = null)
-  {
-    foreach($routes as $routePath => $httpHandlers){
-      foreach($httpHandlers as $httpHandler){
-        if( $httpHandler['routeName'] === $routeName ){
-          $route = [ 
-            'routeName' => $routeName, 
-            'routePath' => $routePath,
-            'routeArgs' => $args
-          ];
-
-          // only defined in dynamic routes
-          if( isset($httpHandler['routeSegments']) ){
-            $routeSegments = $httpHandler['routeSegments'];
-            $route['routeSegments'] = $routeSegments;
-          }
-
-          return $route;
-        }
-      }
-    }
-
-    return self::NOT_FOUND;
-  }
-
-  /**
-   * Determines if the RouteStore object needs to look for a route matching 
-   * the request path passed as argument.
-   *
-   * @param  string  $requestPath  The request path
-   *
-   * @return boolean  The boolean result
-   */
-  private function shouldLookForRoute($requestPath)
-  {
-    return ! $this->namespace || 0 === strpos($requestPath, $this->namespace);
-  }
-
-  /**
-   * Returns the route path passed as argument with the router namespace prepended to it
-   *
-   * @param  string  $routePath  The route path
-   *
-   * @return string  The route path with the prepended router namespace
-   */
-  private function preparePath($routePath)
-  {
-    $routePath = trim($routePath, ' /');
-
-    if( ! $this->namespace ){
-      return $routePath;
-    }
-    
-    return $this->namespace . '/' . $routePath;
-  }
-  
 }
