@@ -22,33 +22,13 @@ This WordPress plugin adds a regular expression based router on top of the WordP
 
 ## Installation
 
-#### Download zip
+#### Download zip via GitHub repo release page
 
-##### Download via WordPress plugin page
-
-You can visit the [WordPress plugin page](https://wordpress.org/plugins/jetrouter/) and download the latest plugin version there.
-
-##### Download via GitHub repo release page
-
-You can also grab the latest release from this repository's [releases page](https://github.com/sformisano/jetrouter/releases).
+You can also grab the latest release from this repository's [releases page](https://github.com/whatthefork/jetrouter).
 
 #### Composer
 
 If your setup uses [Composer](https://getcomposer.org/) for proper dependency management (check out the awesome [Bedrock project](https://roots.io/bedrock/) if you are interested in running WordPress as a 12 factor app) installing the JetRouter is quite easy.
-
-##### Composer via WordPress Packagist (simpler & better)
-
-[WordPress Packagist](https://wpackagist.org/) is a site that scans the WordPress Subversion repository every hour for plugins and themes and then mirrors them as Composer repositories.
-
-Search for "jetrouter" (here's the [search results for that](https://wpackagist.org/search?q=jetrouter) ), click on the latest version in the "Versions" column of the record and you will be given the code to paste in your `composer.json` file in the `require` property.
-
-It should look something like this:
-
-```
-"wpackagist-plugin/jetrouter": "0.1.2.1"
-```
-
-**Please note:** I have had no time to verify this, but even without using the [Bedrock](https://roots.io/bedrock/) WordPress boilerplate, wpackagist packages should automatically install in the plugins directory (which is what you would want) rather than the default composer vendor directory. If that is not the case, reference the *Composer via GitHub releases* section below to learn how to tell composer where to install your WordPress plugins.
 
 ##### Composer via GitHub releases
 
@@ -122,6 +102,7 @@ $r = Router::create($config);
 
 * `namespace`: if defined, the namespace prefixes all routes, e.g. if you set the namespace to “my-api” and then define a route as “comments/published”, the actual endpoint will be “/my-api/comments/published/“.
 * `outputFormat`: determines the routes handlers output format. Available values: `auto`, `json`, `html`.
+* `filters_before`: an array of callbacks that are called before every route is dispatched.
 
 The router automatically hooks itself to WordPress, so once you’ve created the router instance with the configuration that suits your needs, all that is left to do is adding routes. After that, the router is ready to dispatch requests.
 
@@ -144,6 +125,14 @@ $r->addRoute('GET', 'some/resource/path', 'the_route_name', function(){
   // the callback fired when a request matches this route
 });
 ```
+You can also add a route with one or more route-specific filter callbacks (these are run after any global filter callbacks defined in the router config. Example:
+
+```php
+$r->addRoute('GET', 'some/resource/path', 'the_route_name', function(){
+  // the callback fired when a request matches this route
+}, array( 'my_auth_function', 'MYCLASS::this_custom_meth' ) );
+```
+
 
 The `addRoute` method has aliases for each http method (get, post, put, patch, delete, head, options). Example:
 
