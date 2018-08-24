@@ -72,14 +72,14 @@ class RouteStore
    * @param  string    $routeName   The route's name
    * @param  callback  $handler     The handler
    */
-  public function addRoute($httpMethod, $routePath, $routeName, $handler)
+  public function addRoute($httpMethod, $routePath, $routeName, $handler, $filters = array() )
   {
     $this->validateRouteNameUniqueness($routeName);
     $routePath = $this->preparePath($routePath);
 
     $add = self::isStaticRoutePath($routePath) ? 'addStaticRoute' : 'addDynamicRoute';
 
-    $this->$add($httpMethod, $routePath, $routeName, $handler);
+    $this->$add($httpMethod, $routePath, $routeName, $handler, $filters );
   }
 
   /**
@@ -227,8 +227,9 @@ class RouteStore
    *
    * @throws Exception\InvalidRouteException  If a route with the same http method and path already exists
    */
-  private function addStaticRoute($httpMethod, $routePath, $routeName, $handler)
+  private function addStaticRoute($httpMethod, $routePath, $routeName, $handler, $filters = array() )
   {
+
     $route = new StaticRouteParser($httpMethod, $routePath, $routeName, $handler);
     $httpMethod = $route->getHttpMethod();
     $routePath = $route->getPath();
@@ -244,7 +245,8 @@ class RouteStore
     $this->staticRoutes[$routePath][$httpMethod] = [
       'routeName' => $routeName,
       'routeHandler' => $handler,
-      'routeArgs' => []
+      'routeArgs' => array(),
+      'routerFilters' => $filters,
     ];
   }
 
@@ -255,10 +257,12 @@ class RouteStore
    * @param      <type>                           $routePath   The route path
    * @param      <type>                           $routeName   The route name
    * @param      <type>                           $handler     The handler
+   * MJE: MOD -- added filter capability
+   * @param       array     $filters     Array of callbacks for filtering a route before the route is called
    *
    * @throws     Exception\InvalidRouteException  (description)
    */
-  private function addDynamicRoute($httpMethod, $routePath, $routeName, $handler)
+  private function addDynamicRoute($httpMethod, $routePath, $routeName, $handler, $filters = array())
   {
     $route = new DynamicRouteParser($httpMethod, $routePath, $routeName, $handler);
 
@@ -274,7 +278,8 @@ class RouteStore
       'routeName' => $routeName,
       'routeHandler' => $handler,
       'routeArgs' => $paramsNames,
-      'routeSegments' => $segments
+      'routeSegments' => $segments,
+      'routeFilters' => $filters,
     ];
   }
 
