@@ -1,6 +1,6 @@
 # JetRouter - WordPress Routing, Fast & Easy
-[![Build Status](https://travis-ci.org/sformisano/jetrouter.svg?branch=master)](https://travis-ci.org/sformisano/jetrouter)
-[![Code Climate](https://codeclimate.com/github/sformisano/jetrouter/badges/gpa.svg)](https://codeclimate.com/github/sformisano/jetrouter)
+
+### THIS IS A FORK OF THE ORIGINAL JETROUTER(https://github.com/sformisano/jetrouter) WITH ADDED CAPABILITIES TO LOAD IT WITHOUT WORDPRESS BEING LOADED FIRST, AND TO ALLOW ADDING FILTER CALLBACKS THAT CAN RUN BEFORE ROUTES ARE CALLED
 
 This WordPress plugin adds a regular expression based router on top of the WordPress standard routing system. Any route declared through this router will take priority over standard WordPress URLs.
 
