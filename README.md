@@ -42,11 +42,11 @@ Add this package to the "repositories" property of your composer json definition
       "package": {
         "name": "jetrouter",
         "type": "wordpress-plugin",
-        "version": "0.1.2.1",
+        "version": "1.0",
         "dist": {
           "type": "zip",
-          "url": "https://github.com/sformisano/jetrouter/releases/download/v0.1.2/jetrouter-v0.1.2.1.zip",
-          "reference": "v0.1.2.1"
+          "url": "https://github.com/whatthefork/jetrouter/archive/v1.0.zip",
+          "reference": "v1.0"
         },
         "autoload": {
           "classmap": ["."]
@@ -62,7 +62,7 @@ Once that's done, add the JetRouter in the composer require property (the versio
 ```json
 {
   "require":{
-    "jetrouter": "0.1.2.1"
+    "jetrouter": "1.0"
   }
 }
 ```
@@ -118,6 +118,8 @@ Without a namespace, on the other hand, the router will try to dispatch all requ
 
 #### The basics
   
+##### Make sure that you create your route callback code before you define a route
+ 
 The basic method to add routes is `addMethod`. Example:
 
 ```php
@@ -130,7 +132,7 @@ You can also add a route with one or more route-specific filter callbacks (these
 ```php
 $r->addRoute('GET', 'some/resource/path', 'the_route_name', function(){
   // the callback fired when a request matches this route
-}, array( 'my_auth_function', 'MYCLASS::this_custom_meth' ) );
+}, array( 'my_auth_function', 'MYCLASS::this_custom_method' ) );
 ```
 
 
