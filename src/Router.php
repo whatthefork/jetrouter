@@ -16,7 +16,8 @@ class Router
 
   private static $defaults = [
     'namespace' => '',
-    'outputFormat' => 'auto'
+    'outputFormat' => 'auto',
+    'filters_before' => array(),
   ];
 
   private $routeStore;
@@ -25,7 +26,7 @@ class Router
   
   // MJE: a global array of callbacks that are called in the order defined before a route is dispatched.
   // Useful for checking authentication etc.
-  public $filters_before = array();
+  private $filters_before;
 
   /*** STATIC METHODS ***/
 
@@ -56,6 +57,7 @@ class Router
     $this->routeStore = new RouteStore($config['namespace']);
     $this->reverseRouter = new ReverseRouter($this->routeStore);
     $this->requestDispatcher = new RequestDispatcher($config['outputFormat']);
+    $this->filters_before = $config['filters_before'];
 
     // MJE MOD: Added function_exists() check so that the router can be loaded even when WP isn't loaded
     if ( function_exists( 'add_action' ) ) 
