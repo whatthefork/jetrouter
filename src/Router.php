@@ -22,6 +22,10 @@ class Router
   private $routeStore;
   private $reverseRouter;
   private $requestDispatcher;
+  
+  // MJE: a global array of callbacks that are called in the order defined before a route is dispatched.
+  // Useful to checking authentication etc.
+  public $filters_before = array();
 
   /*** STATIC METHODS ***/
 
@@ -67,6 +71,7 @@ class Router
    */
   public function run()
   {
+
     $httpMethod = $_SERVER['REQUEST_METHOD'];
     $path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
 
@@ -88,13 +93,16 @@ class Router
    * @param  string  $path        The path
    *
    * @return mixed  ( description_of_the_return_value )
+   *
+   * MJE MOD: pass the dispatcher the global filter array that run before any route is dispatched
    */
   public function dispatch($httpMethod, $path)
   {
     return $this->requestDispatcher->dispatch(
       $this->routeStore,
       $httpMethod,
-      $path
+      $path,
+      $this->filters_before
     );
   }
 
@@ -106,15 +114,17 @@ class Router
    * 
    * Look at the RouteStore 'addRoute' method for details as this is just
    * a wrapper for that method.
-   *
+   *  
    * @param  string    $httpMethod  The route's http method
    * @param  string    $routePath   The route's route path
    * @param  string    $routeName   The route's route name
    * @param  callback  $handler     The route's handler
+   * MJE: MOD -- added filter capability
+   * @param  array     $filters     Array of callbacks for filtering a route before the route is called
    */
-  public function addRoute($httpMethod, $routePath, $routeName, $handler)
+  public function addRoute($httpMethod, $routePath, $routeName, $handler, $filters = array() )
   {
-    $this->routeStore->addRoute($httpMethod, $routePath, $routeName, $handler);
+    $this->routeStore->addRoute($httpMethod, $routePath, $routeName, $handler, $filters );
   }
 
 
