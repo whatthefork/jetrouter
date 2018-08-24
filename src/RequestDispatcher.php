@@ -75,6 +75,12 @@ class RequestDispatcher
    * Tries to find a route in the route store by http method and request path.
    * Returns a NOT_DISPATCHED status code if no route matches.
    *
+   *
+   * MJE: MOD -- added filter capability
+   *
+   * If a route match is found and the route has filters or global filters are defined then the filters are called and if any one of them return false 
+   * the route is not called.
+   * ELSE : 
    * If a match is found, the route handler is called and the appropriate output
    * is printed/returned depending on request type and config.
    *
@@ -84,7 +90,7 @@ class RequestDispatcher
    *
    * @return integer|mixed|string|mixed  Returns the RouteStore::NOT_FOUND status code (int), mixed if it prints json or returning $output, and finally if $output is a callback returns its returned value
    */
-  public function dispatch($routeStore, $requestHttpMethod, $requestPath)
+  public function dispatch($routeStore, $requestHttpMethod, $requestPath, $global_filters = array() )
   {
     $route = $routeStore->findRouteByRequestMethodAndPath($requestHttpMethod, $requestPath);
 
@@ -93,6 +99,26 @@ class RequestDispatcher
       return self::NOT_DISPATCHED;
     }
 
+    // MJE MOD: Call global filters if any exist
+    if ( !empty( $global_filters ) ) { 
+	foreach( $global_filters as $filter ) { 
+		$result = call_user_func_array( $filter, $route );
+		if ( false === $result ) { 
+			return self::NOT_DISPATCHED;
+		}
+	}
+    }
+    
+    // MJE MOD: Call route filters if any exist
+    if ( !empty( $route['routeFilters'] ) ) { 
+	foreach( $route['routeFilters'] as $filter ) { 
+		$result = call_user_func_array( $filter, $route );
+		if ( false === $result ) { 
+			return self::NOT_DISPATCHED;
+		}
+	}
+    }
+    
     $output = $this->parseHandlerOutput(
       call_user_func_array($route['routeHandler'], $route['routeArgs'])
     );
